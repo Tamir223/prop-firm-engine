@@ -28,7 +28,7 @@ PRICE_TO_PLAN = {
 app = FastAPI()
 @app.get("/logo-social-1024.jpg")
 async def get_logo():
-    return FileResponse("logo-social-1024.jpg")
+    return FileResponse("/home/ubuntu/apfee/logo-social-1024.png")
 
 @app.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
