@@ -7,7 +7,7 @@ import json
 import logging
 import stripe
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import RedirectResponse, HTMLResponse, PlainTextResponse, JSONResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, PlainTextResponse, JSONResponse, FileResponse
 from database import (
     get_user_by_email, get_user_by_stripe_customer,
     create_user, set_user_active
@@ -26,7 +26,9 @@ PRICE_TO_PLAN = {
 }
 
 app = FastAPI()
-
+@app.get("/logo-social-1024.jpg")
+async def get_logo():
+    return FileResponse("logo-social-1024.jpg")
 
 @app.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
