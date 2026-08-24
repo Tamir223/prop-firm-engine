@@ -1006,6 +1006,7 @@ def _try_reprice_stale_signal(
     candles_15m: list,
     ob: dict | None,
     fvg: dict | None,
+    atr: float = 0.0,
 ) -> tuple | None:
     """
     IOFED/IFVG re-pricing: when original entry is stale (remaining R:R < 1.5R),
@@ -1016,6 +1017,19 @@ def _try_reprice_stale_signal(
     2. 5M FVG aligned with direction
     3. IFVG — original FVG zone that price has broken through and returned to
 
+    atr: current ATR (same units as price, same value already computed for
+    Gate 7 — no extra fetch needed). Repriced entries are anchored to fresh,
+    thin 5M structure near an already-displaced price, so their raw stop
+    distance is often even tighter than the static per-symbol floor — that
+    floor is a fixed number that doesn't know whether the market is calm or
+    violent right now. Research on stop placement is consistent on this exact
+    failure mode: a fixed-pip/point stop "ignores regime changes" and traders
+    report getting "wicked out of good trades" specifically because of it;
+    the standard fix is a volatility-scaled buffer on top of the structural
+    stop, not a bigger flat number. This adds that: if 1.5x current ATR is
+    wider than what the static floor already provides, the wider one wins.
+    It never tightens a stop that was already fine.
+
     Returns (new_entry, new_sl, new_tp1, new_tp2, ref_type, new_rr, zone_lo, zone_hi) or None.
     """
     _sym_u = symbol.upper()
@@ -1024,10 +1038,20 @@ def _try_reprice_stale_signal(
     _is_pts = _sym_u in ("XAUUSD", "US30", "NAS100", "US100", "US500") or _sym_u in YFINANCE_FUTURES_MAP
     _dp = 3 if _is_pts else 5
     trend = "bullish" if direction == "BUY" else "bearish"
+    ATR_SL_BUFFER_MULTIPLIER = 1.5  # conservative end of the commonly-cited 1.5-2.5x ATR range
 
     def _compute(raw_entry: float, raw_extreme: float) -> tuple | None:
         _entry = round(raw_entry + _spot_off, _dp)
         _sl_dist = max(abs(raw_entry - raw_extreme), _min_sl_dist(symbol))
+        if atr and atr > 0:
+            _atr_floor = atr * ATR_SL_BUFFER_MULTIPLIER
+            if _atr_floor > _sl_dist:
+                logger.info(
+                    f"[staleness] {symbol} ATR volatility floor widened repriced SL: "
+                    f"static/structural={_sl_dist:.5f} -> ATR-based={_atr_floor:.5f} "
+                    f"(ATR={atr:.5f} x {ATR_SL_BUFFER_MULTIPLIER})"
+                )
+            _sl_dist = max(_sl_dist, _atr_floor)
         _sl_dist = min(_sl_dist, _max_sl_dist(symbol))
         _mult = _tp1_mult(symbol)
         if direction == "BUY":
@@ -2912,19 +2936,46 @@ async def scan_symbol(symbol: str, active_signals: list = None) -> dict | None:
         )
         logger.info(f"[scanner] {symbol} {direction} — all 7 gates passed, unified signal built")
 
-        # ── REMAINING R:R CHECK ────────────────────────────────────────
-        # By dispatch time, price may have already moved toward TP1.
-        # Recalculate R:R using CURRENT price as the entry — if the
-        # remaining reward-to-risk from here no longer meets the 1.5R
-        # minimum, try IOFED/IFVG re-pricing from a fresh structural
-        # reference near current price before declaring the signal stale.
+        # ── STALENESS CHECK ─────────────────────────────────────────────
+        # Every non-ORB signal is a resting LIMIT order — price is expected
+        # to NOT be at the entry yet at dispatch time; that's the entire
+        # premise of waiting for a pullback instead of using a market order.
+        #
+        # The previous version of this check recomputed R:R using CURRENT
+        # price as a stand-in "entry" and re-priced/blocked whenever that
+        # fell below 1.5R. That's a market-order framing applied to a
+        # limit-order signal: for a BUY pullback, current price sits ABOVE
+        # the planned entry (waiting to fall back down into it), so
+        # measuring risk from current price to SL is always WIDER than the
+        # real entry-to-SL distance, and reward to TP1 is always THINNER —
+        # shrinking the apparent R:R even when the resting order's actual
+        # R:R (once filled at the planned entry) is untouched. A verified
+        # 2.0R setup fails this check the instant price is even slightly
+        # away from the exact entry, which for a freshly-built pullback
+        # signal is nearly always true — explaining signals being repriced
+        # almost universally rather than only when genuinely stale.
+        #
+        # The correct question isn't "would R:R still work if I bought
+        # right now at market" — it's "has the resting limit order's own
+        # setup actually been invalidated": either price already breached
+        # the SL (the zone/level failed before it could fill), or price
+        # already reached/passed TP1 without the entry ever filling (the
+        # move happened without the pullback — chasing it now is a
+        # different, unqualified trade). Neither of those being true means
+        # the original entry/SL/TP1 are still exactly as valid as when
+        # they were built, and should dispatch unchanged — no repricing.
         if current_price and _sig_sl and _sig_tp1:
-            _remaining_valid, _remaining_rr = validate_risk_reward(float(current_price), _sig_sl, _sig_tp1, symbol=symbol)
-            if not _remaining_valid:
+            _cp = float(current_price)
+            if direction == "BUY":
+                _stale = _cp <= _sig_sl or _cp >= _sig_tp1
+            else:
+                _stale = _cp >= _sig_sl or _cp <= _sig_tp1
+            if _stale:
                 _repriced = _try_reprice_stale_signal(
                     symbol, direction, float(current_price),
                     candles_5m, candles,
                     ob, fvg,
+                    atr=(atr_data.get('atr', 0.0) if atr_data else 0.0),
                 )
                 if _repriced:
                     _new_entry, _new_sl, _new_tp1, _new_tp2, _ref_type, _new_rr, _new_zone_lo, _new_zone_hi = _repriced
@@ -2971,9 +3022,9 @@ async def scan_symbol(symbol: str, active_signals: list = None) -> dict | None:
                             fvg = None
                 else:
                     logger.info(
-                        f"[staleness] {symbol} {direction} blocked — remaining R:R "
-                        f"from current price {current_price} is {_remaining_rr:.2f} "
-                        f"(below 1.5R minimum) — no fresh structure found, signal stale"
+                        f"[staleness] {symbol} {direction} blocked — original entry invalidated "
+                        f"(current price {current_price} vs entry={_sig_entry} sl={_sig_sl} tp1={_sig_tp1}) "
+                        f"— no fresh structure found to re-price from, signal dropped"
                     )
                     _last_signal_time[_sym_key] = _time.monotonic()
                     _last_swept_level[_sym_key] = _swept_level if _swept_level else 0.0
