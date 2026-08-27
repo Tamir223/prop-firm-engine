@@ -1837,7 +1837,12 @@ def build_auto_signal(symbol: str, direction: str, price: float,
             entry = price if ob["low"] <= price <= ob["high"] else ob["mid"]
             sl = round(ob["low"] - (ob["high"] - ob["low"]) * 0.1, 5)
         elif fvg and fvg["type"] == "bullish_fvg":
-            entry = price if fvg["bottom"] <= price <= fvg["top"] else fvg["top"]
+            # CE (Consequent Encroachment) — the FVG's 50% midpoint. Confirmed by
+            # unanimous ICT research: CE is "the most reliable entry or reaction
+            # point," and ICT's own teaching is specifically that you don't need
+            # to wait for a full/deep fill — only to CE. The shallow-edge entry
+            # this used before (fvg["top"]) matched neither documented approach.
+            entry = price if fvg["bottom"] <= price <= fvg["top"] else fvg["mid"]
             sl = round(fvg["bottom"] - (fvg["top"] - fvg["bottom"]) * 0.5, 5)
         else:
             entry = price
@@ -1860,7 +1865,9 @@ def build_auto_signal(symbol: str, direction: str, price: float,
             entry = price if ob["low"] <= price <= ob["high"] else ob["mid"]
             sl = round(ob["high"] + (ob["high"] - ob["low"]) * 0.1, 5)
         elif fvg and fvg["type"] == "bearish_fvg":
-            entry = price if fvg["bottom"] <= price <= fvg["top"] else fvg["bottom"]
+            # Same CE fix, mirrored for SELL — see the BUY branch above for the
+            # research backing.
+            entry = price if fvg["bottom"] <= price <= fvg["top"] else fvg["mid"]
             sl = round(fvg["top"] + (fvg["top"] - fvg["bottom"]) * 0.5, 5)
         else:
             entry = price
