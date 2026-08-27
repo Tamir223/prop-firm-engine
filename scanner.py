@@ -1076,11 +1076,18 @@ def _try_reprice_stale_signal(
     if candles_5m and len(candles_5m) >= 5:
         _5m_ob = detect_order_block(candles_5m, trend, symbol=symbol)
         if _5m_ob:
+            # Entry at the OB's 50% mean threshold, not the raw edge — matches
+            # ICT convention (confirmed across research: "the optimal entry is
+            # at the mean threshold — the 50% level... where the highest
+            # concentration of institutional orders likely reside") and matches
+            # what the 5M FVG and IFVG branches below already correctly do.
+            # SL reference stays anchored beyond the FULL zone regardless of
+            # where entry sits within it — that part was already correct.
             if direction == "BUY":
-                _raw_e = _5m_ob["low"]
+                _raw_e = _5m_ob["mid"]
                 _raw_x = _5m_ob["low"] - _min_sl_dist(symbol)
             else:
-                _raw_e = _5m_ob["high"]
+                _raw_e = _5m_ob["mid"]
                 _raw_x = _5m_ob["high"] + _min_sl_dist(symbol)
             _res = _compute(_raw_e, _raw_x)
             if _res:
@@ -2988,6 +2995,20 @@ async def scan_symbol(symbol: str, active_signals: list = None) -> dict | None:
                     _sig_sl    = _new_sl
                     _sig_tp1   = _new_tp1
                     _sig_tp2   = _new_tp2
+                    # TP3 bug fix: repricing overwrites entry/SL/TP1/TP2 but the return
+                    # tuple carries no TP3 — leaving whatever TP3 the earlier swept-level
+                    # block computed against the OLD, now-discarded entry. That value has
+                    # no relationship to the new entry (confirmed live: a real signal
+                    # shipped TP3 only 0.19R from entry, closer than the stop itself,
+                    # because it was never recalculated after repricing). Recompute it
+                    # fresh here, same 5R convention already used elsewhere in this file,
+                    # so it's always consistent with the entry actually being dispatched.
+                    _rp_dp = 3 if (symbol.upper() in ("XAUUSD", "US30", "NAS100", "US100", "US500") or symbol.upper() in YFINANCE_FUTURES_MAP) else 5
+                    _rp_sl_dist = abs(_sig_entry - _sig_sl)
+                    if direction == "BUY":
+                        _sig_tp3 = round(_sig_entry + _rp_sl_dist * 5.0, _rp_dp)
+                    else:
+                        _sig_tp3 = round(_sig_entry - _rp_sl_dist * 5.0, _rp_dp)
                     # Show the REAL zone the repriced entry actually came from, not the
                     # original (now-stale) OB/FVG text frozen at Gate 5 evaluation time.
                     # Clearing ob/fvg alone (below) never changed this string — the label
