@@ -69,7 +69,7 @@ FAST_INSTRUMENTS = {"USDJPY", "XAUUSD", "US100", "US30", "US500"}
 
 # Discord broadcast whitelist — scanner and Telegram are unaffected.
 # Only signals for these symbols are forwarded to send_to_discord().
-DISCORD_SYMBOL_WHITELIST = {"EURUSD", "XAUUSD", "USDJPY", "GBPUSD"}
+DISCORD_SYMBOL_WHITELIST = {"EURUSD", "XAUUSD", "USDJPY"}
 
 
 logger = logging.getLogger(__name__)
@@ -444,13 +444,19 @@ def _detect_asia_sweep_or_recent(symbol: str, candles: list, direction: str) -> 
 BASE_URL = "https://api.twelvedata.com"
 
 SYMBOLS = [
-    'XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY',
-    # 'AUDUSD', 'USDCAD', 'NZDUSD', 'USDCHF', 'USOIL',  # disabled — narrowed to the 4 pairs actually being watched
+    'XAUUSD', 'EURUSD', 'USDJPY',
+    # 'GBPUSD',  # disabled — 0.31 Sharpe (below 0.5 tradeability threshold) + documented
+    #            # false-breakout tendency, independent of market regime (unlike EURUSD's
+    #            # current low-volatility phase). Live sample too small to confirm/refute
+    #            # (4 logged trades, 2-2, some trades went unlogged) — decision made on
+    #            # the original walk-forward research, not live data.
+    # 'AUDUSD', 'USDCAD', 'NZDUSD', 'USDCHF', 'USOIL',  # disabled — narrowed to the pairs actually being watched
     # 'US100', 'US30', 'US500',  # disabled — zero fills to date
 ]
 
 # Default watchlist — users can customize with /watch command
-DEFAULT_WATCHLIST = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
+DEFAULT_WATCHLIST = ["EURUSD", "USDJPY", "XAUUSD"]
+# Disabled: "GBPUSD" — see SYMBOLS comment above for the research backing
 # Disabled: "US100", "US30", "US500" — zero fills to date; re-add here + SYMBOLS + _preferred_order to restore
 
 
