@@ -2732,6 +2732,14 @@ async def scan_symbol(symbol: str, active_signals: list = None) -> dict | None:
                     _sig_sl = round(_zone_lo - _zone_buf, _dp_sw)
                     _sw_sl_dist = abs(_sig_entry - _sig_sl)
                     _sig_tp1 = round(_sig_entry + _sw_sl_dist * _tp1_mult(symbol), _dp_sw)
+                    # BUG FIX: TP2 was left at its pre-widening value here — only TP1
+                    # got recalculated against the new, wider SL distance. Confirmed
+                    # live: a USDJPY signal shipped TP2 closer to entry than TP1 (1.1R
+                    # vs 2.0R) because TP2 was still the stale ~12-pip-SL-based value
+                    # after SL had already been widened to 27 pips to clear the zone.
+                    # TP2 must be recomputed from the same _sw_sl_dist as TP1, same
+                    # 2.5R convention used everywhere else in the file.
+                    _sig_tp2 = round(_sig_entry + _sw_sl_dist * 2.5, _dp_sw)
                     logger.warning(
                         f"[scanner] {symbol} SL zone-clearance override — capped SL {_old_sl} sat "
                         f"inside entry zone {_zone_lo}-{_zone_hi}; moved to {_sig_sl} (beyond zone, "
@@ -2742,6 +2750,8 @@ async def scan_symbol(symbol: str, active_signals: list = None) -> dict | None:
                     _sig_sl = round(_zone_hi + _zone_buf, _dp_sw)
                     _sw_sl_dist = abs(_sig_sl - _sig_entry)
                     _sig_tp1 = round(_sig_entry - _sw_sl_dist * _tp1_mult(symbol), _dp_sw)
+                    # Same TP2 fix, mirrored for SELL — see the BUY branch above.
+                    _sig_tp2 = round(_sig_entry - _sw_sl_dist * 2.5, _dp_sw)
                     logger.warning(
                         f"[scanner] {symbol} SL zone-clearance override — capped SL {_old_sl} sat "
                         f"inside entry zone {_zone_lo}-{_zone_hi}; moved to {_sig_sl} (beyond zone, "
