@@ -1283,16 +1283,34 @@ async def fetch_all_timeframes(symbol: str) -> dict:
                     "ES": 5.0, "MES": 5.0, "NQ": 20.0, "MNQ": 20.0,
                     "CL": 0.3, "MCL": 0.3, "GC": 5.0, "MGC": 5.0,
                     "RTY": 3.0, "YM": 50.0,
-                    # XAUUSD raised 3.0 -> 15.0: research on 1H ATR(14) for gold specifically
-                    # gives 20-35 as normal active session, 15-20 as low volatility, and BELOW
-                    # 15 as "dead market" (Asian off-hours). A floor of 3.0 was ~20% of even the
-                    # dead-market threshold, meaning this gate essentially never triggered
-                    # regardless of real conditions. 15.0 is the actual dead-market boundary
-                    # cited in that research, not an arbitrary tightening.
+                    # XAUUSD raised 3.0 -> 15.0 (Sep 2026). CORRECTION: this was originally
+                    # justified citing "1H ATR(14)" research (20-35 normal, 15-20 low,
+                    # <15 dead market) — but that research is for real Wilder ATR on 1-HOUR
+                    # candles, and this calculation is a simple mean of high-low range over
+                    # the first 14 15-MINUTE candles (3.5 hours of data, no smoothing). That
+                    # citation does not actually describe this metric. get_atr() in market.py
+                    # implements genuine 1H/14-period ATR matching that research but is never
+                    # called anywhere in the codebase — dead code. 15.0 is a placeholder:
+                    # very likely still an improvement (3.0 was barely wider than one 15M
+                    # candle's range, so it was almost certainly non-functional as a filter
+                    # regardless of the "right" number), but NOT independently verified for
+                    # this exact calculation. ATR_CALIBRATION_LOG below is recording real
+                    # readings so this can be properly calibrated once genuine data exists,
+                    # the same evidentiary standard the xau_pre_ny/xau_pm kill-zone windows
+                    # already have (built from 22 real logged BOS events, not estimated).
                     "XAUUSD": 15.0,
                 }
                 threshold = _futures_thr.get(sym, _get_pip_spec(sym).get("min_atr", 0.0007))
                 atr_data = {"atr": atr_val, "is_low_volatility": atr_val < threshold}
+                # ATR_CALIBRATION_LOG — records every real reading for XAUUSD/EURUSD/USDJPY
+                # so the thresholds above (and PIP_SPECS' min_atr for the forex pairs) can be
+                # set from genuine observed data instead of estimation. Pull with:
+                #   journalctl -u apfee --since "3 days ago" | grep ATR_CALIBRATION_LOG
+                if sym in ("XAUUSD", "EURUSD", "USDJPY"):
+                    logger.info(
+                        f"ATR_CALIBRATION_LOG {sym} atr={atr_val:.5f} threshold={threshold:.5f} "
+                        f"is_low_volatility={atr_val < threshold}"
+                    )
 
     except Exception as e:
         logger.error(f"[fetch_all_timeframes] {symbol}: {e}")
@@ -1313,7 +1331,17 @@ async def fetch_all_timeframes(symbol: str) -> dict:
                         if len(candles_15m) >= 14:
                             ranges = [c["high"] - c["low"] for c in candles_15m[:14]]
                             atr_val = sum(ranges) / len(ranges)
-                            atr_data = {"atr": atr_val, "is_low_volatility": atr_val < _get_pip_spec(sym).get("min_atr", 0.0007)}
+                            _td_threshold = _get_pip_spec(sym).get("min_atr", 0.0007)
+                            atr_data = {"atr": atr_val, "is_low_volatility": atr_val < _td_threshold}
+                            # Same ATR_CALIBRATION_LOG as the primary yfinance path above —
+                            # this TD-fallback branch is reachable for EURUSD/USDJPY (not
+                            # XAUUSD, excluded above), so it needs matching coverage or the
+                            # real-data collection would have silent gaps.
+                            if sym in ("EURUSD", "USDJPY"):
+                                logger.info(
+                                    f"ATR_CALIBRATION_LOG {sym} atr={atr_val:.5f} "
+                                    f"threshold={_td_threshold:.5f} is_low_volatility={atr_val < _td_threshold} (TD fallback)"
+                                )
                         logger.info(f"[fetch_all_timeframes] {sym} 15m: TD fallback OK ({len(candles_15m)} candles)")
                 except Exception as _td_e:
                     logger.error(f"[fetch_all_timeframes] {sym} TD fallback error: {_td_e}")
