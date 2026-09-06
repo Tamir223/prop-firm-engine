@@ -29,7 +29,10 @@ PIP_SPECS = {
     "USDJPY": {"pip": 0.01,   "min_sl": 0.08,   "min_atr": 0.035, "max_lots": 0.50},    # 8 pips JPY
     "EURJPY": {"pip": 0.01,   "min_sl": 0.15,   "min_atr": 0.08},
     "GBPJPY": {"pip": 0.01,   "min_sl": 0.15,   "min_atr": 0.10},
-    "XAUUSD": {"pip": 0.01,   "min_sl": 12.0,   "min_atr": 2.0},     # 12 points — gold needs room
+    "XAUUSD": {"pip": 0.01,   "min_sl": 12.0,   "min_atr": 15.0},    # 12 points — gold needs room;
+                                                                     # min_atr raised 2.0->15.0, see
+                                                                     # scanner.py _futures_thr comment
+                                                                     # for the research this matches
     "XAGUSD": {"pip": 0.001,  "min_sl": 0.05,   "min_atr": 0.03},
     "US100":  {"pip": 1.0, "min_sl": 80.0,  "min_atr": 20.0, "pip_size": 1.0, "pip_value": 1.0, "min_sl_pips": 80,  "max_sl_pips": 300, "digits": 2, "unit": "pts"},
     "US30":   {"pip": 1.0, "min_sl": 60.0,  "min_atr": 17.0, "pip_size": 1.0, "pip_value": 1.0, "min_sl_pips": 60,  "max_sl_pips": 250, "digits": 2, "unit": "pts"},

@@ -1235,7 +1235,14 @@ async def fetch_all_timeframes(symbol: str) -> dict:
                 _futures_thr = {
                     "ES": 5.0, "MES": 5.0, "NQ": 20.0, "MNQ": 20.0,
                     "CL": 0.3, "MCL": 0.3, "GC": 5.0, "MGC": 5.0,
-                    "RTY": 3.0, "YM": 50.0, "XAUUSD": 3.0,
+                    "RTY": 3.0, "YM": 50.0,
+                    # XAUUSD raised 3.0 -> 15.0: research on 1H ATR(14) for gold specifically
+                    # gives 20-35 as normal active session, 15-20 as low volatility, and BELOW
+                    # 15 as "dead market" (Asian off-hours). A floor of 3.0 was ~20% of even the
+                    # dead-market threshold, meaning this gate essentially never triggered
+                    # regardless of real conditions. 15.0 is the actual dead-market boundary
+                    # cited in that research, not an arbitrary tightening.
+                    "XAUUSD": 15.0,
                 }
                 threshold = _futures_thr.get(sym, _get_pip_spec(sym).get("min_atr", 0.0007))
                 atr_data = {"atr": atr_val, "is_low_volatility": atr_val < threshold}
