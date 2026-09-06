@@ -633,23 +633,70 @@ def get_candles(symbol: str, interval: str = "15min", outputsize: int = 200) -> 
     return None
 
 
-def detect_structure(candles: list) -> dict:
+def detect_structure(candles: list, swing_length: int = 2) -> dict:
     """
     Detect market structure: Higher Highs, Lower Lows, BOS, CHOCH.
-    Uses last 20 candles.
+
+    Uses genuine fractal swing-pivot detection — a swing high/low only counts
+    once it's confirmed by `swing_length` candles on BOTH sides (the standard
+    convention across every ICT/SMC reference checked, including the
+    open-source joshyattridge/smart-money-concepts Python library: "A swing
+    high is when the current high is the highest high out of the
+    swing_length amount of candles before and after"). This is the same
+    concept as a classic technical-analysis fractal (Bill Williams' Fractal
+    indicator uses the same symmetric before/after confirmation).
+
+    The previous version of this function sampled 3 fixed-index candles
+    (positions 0, 2, 4 out of the most recent 20) and checked if they were
+    monotonically ordered — never verifying they were real, confirmed
+    pivots. That could read structure into noise that a genuine fractal
+    check would reject (verified directly: a synthetic candle sequence with
+    a clear non-monotonic wiggle fooled the old method into reading "rising
+    highs" when the real extremes sat at ignored indices; the new method
+    correctly read that same sequence as "unclear" instead).
+
+    candles: newest-first (candles[0] = most recent close), same convention
+    as every other function in this file.
     """
-    if not candles or len(candles) < 10:
+    if not candles or len(candles) < (swing_length * 2 + 10):
         return {"trend": "unclear", "bos": False, "choch": False}
 
-    recent = candles[:20]
-    highs = [c["high"] for c in recent]
-    lows = [c["low"] for c in recent]
+    window = candles[:30]
 
-    # Simple HH/HL or LH/LL detection
-    hh = highs[0] > highs[2] > highs[4]  # recent highs rising
-    hl = lows[0] > lows[2] > lows[4]     # recent lows rising
-    lh = highs[0] < highs[2] < highs[4]  # recent highs falling
-    ll = lows[0] < lows[2] < lows[4]     # recent lows falling
+    def _find_swing_pivots(key: str, is_high: bool) -> list:
+        """Indices (into `window`) of confirmed swing pivots, most-recent-first."""
+        pivots = []
+        for i in range(swing_length, len(window) - swing_length):
+            candidate = window[i][key]
+            neighbors = (
+                [window[j][key] for j in range(i - swing_length, i)] +
+                [window[j][key] for j in range(i + 1, i + swing_length + 1)]
+            )
+            if is_high and all(candidate > n for n in neighbors):
+                pivots.append(i)
+            elif not is_high and all(candidate < n for n in neighbors):
+                pivots.append(i)
+        return pivots
+
+    swing_high_idxs = _find_swing_pivots("high", True)
+    swing_low_idxs = _find_swing_pivots("low", False)
+
+    # Need at least 2 confirmed pivots each way to compare "is the latest
+    # swing higher/lower than the one before it" — same requirement the old
+    # method had (it also compared two points), just now both points are
+    # genuine confirmed pivots instead of arbitrary fixed indices.
+    if len(swing_high_idxs) < 2 or len(swing_low_idxs) < 2:
+        return {"trend": "unclear", "bos": False, "choch": False}
+
+    last_high = window[swing_high_idxs[0]]["high"]
+    prev_high_swing = window[swing_high_idxs[1]]["high"]
+    last_low = window[swing_low_idxs[0]]["low"]
+    prev_low_swing = window[swing_low_idxs[1]]["low"]
+
+    hh = last_high > prev_high_swing   # recent confirmed high higher than the one before it
+    hl = last_low > prev_low_swing     # recent confirmed low higher than the one before it
+    lh = last_high < prev_high_swing
+    ll = last_low < prev_low_swing
 
     if hh and hl:
         trend = "bullish"
@@ -658,10 +705,10 @@ def detect_structure(candles: list) -> dict:
     else:
         trend = "ranging"
 
-    # Break of structure — current close beyond recent swing
+    # Break of structure — current close beyond the most recent CONFIRMED swing
     current_close = candles[0]["close"]
-    prev_high = max(highs[1:6])
-    prev_low = min(lows[1:6])
+    prev_high = last_high
+    prev_low = last_low
 
     bos_bull = current_close > prev_high and trend == "bullish"
     bos_bear = current_close < prev_low and trend == "bearish"
