@@ -3238,6 +3238,37 @@ async def scan_symbol(symbol: str, active_signals: list = None) -> dict | None:
             _last_signal_time[_sym_key] = _time.monotonic()
             _last_swept_level[_sym_key] = _swept_level if _swept_level else 0.0
             return None
+
+        # FINAL STALENESS RE-CHECK — the "correct side" check above only confirms
+        # direction (entry above/below current price for SELL/BUY); it never checks
+        # DISTANCE. A repriced entry can be on the correct side yet already far past
+        # its own TP1 — confirmed live: a USDJPY SELL repriced at 23:23:44 UTC found
+        # a technically-fresh 5M OB (154.3465, correct side), but by the moment of
+        # dispatch live price had already reached 153.96 — 38.65 pips past entry and
+        # already through both TP1 (154.13371) and TP2 (154.08051). The repricing
+        # function only checks that the STRUCTURE it finds is fresh; it never
+        # re-validates that the resulting ENTRY is still close enough to current
+        # price to make sense as a limit order. This reuses the exact staleness
+        # definition already built and verified earlier (same "has price already
+        # reached/passed TP1 or breached SL" check used for the original entry),
+        # applied here as a last checkpoint against the freshest possible live
+        # price — catching a stale result regardless of which path produced it
+        # (original entry, repriced, or any future code path).
+        if _sig_tp1 and _sig_sl:
+            if direction == "SELL":
+                _final_stale = _cp_final >= _sig_sl or _cp_final <= _sig_tp1
+            else:
+                _final_stale = _cp_final <= _sig_sl or _cp_final >= _sig_tp1
+            if _final_stale:
+                logger.warning(
+                    f"[entry_validation] {symbol} entry {_sig_entry} already invalidated vs "
+                    f"freshest live price {_cp_final} (sl={_sig_sl} tp1={_sig_tp1}) — "
+                    f"blocking rather than dispatching an already-exhausted setup"
+                )
+                _last_signal_time[_sym_key] = _time.monotonic()
+                _last_swept_level[_sym_key] = _swept_level if _swept_level else 0.0
+                return None
+
         logger.info(
             f"[entry_validation] {symbol} {direction} entry {_sig_entry} valid vs live {_cp_final} — passing"
         )
