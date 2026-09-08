@@ -1472,9 +1472,23 @@ def get_daily_bias(symbol: str, candles: list = None) -> dict:
         intraday_move_pct = ((today["close"] - today["open"]) / today["open"] * 100) if today["open"] else 0.0
         intraday_override = today_ratio > 0.6
 
-        # Weighted score: today×5, d1×4, d2×3, d3×2, d4×1 — max ±15
+        # Today's weight is SCALED by how decisive its body actually is (reusing the
+        # same 0.6 body-ratio threshold already used for intraday_override just above),
+        # instead of a flat +-5 regardless of how tiny/undeveloped the candle currently
+        # is. Confirmed live via htf_bias_diag: with the old flat weighting, a barely-
+        # formed today candle sitting right around its own open could flip the
+        # "confirmed" verdict (bearish -> neutral) within 32 seconds on otherwise
+        # completely stable underlying data — today's incomplete move, weighted at full
+        # strength (the single largest weight in the whole score), was acting as pure
+        # noise rather than genuine signal. A candle that's already moved decisively
+        # (body_ratio >= 0.6, the SAME bar this function already uses elsewhere to call
+        # a move "strong") still gets its full original weight; anything less scales
+        # down proportionally rather than voting at full strength on a coin flip.
+        _today_weight = 5 * min(today_ratio / 0.6, 1.0) if today_ratio else 0
+
+        # Weighted score: today (scaled, max 5), d1×4, d2×3, d3×2, d4×1 — max ±15
         weighted = (
-            _score(today) * 5 +
+            _score(today) * _today_weight +
             _score(d1)    * 4 +
             _score(d2)    * 3 +
             _score(d3)    * 2 +
