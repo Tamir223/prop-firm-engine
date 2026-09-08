@@ -1500,7 +1500,13 @@ def get_daily_bias(symbol: str, candles: list = None) -> dict:
         # (body_ratio >= 0.6, the SAME bar this function already uses elsewhere to call
         # a move "strong") still gets its full original weight; anything less scales
         # down proportionally rather than voting at full strength on a coin flip.
-        _today_weight = 5 * min(today_ratio / 0.6, 1.0) if today_ratio else 0
+        # round() keeps this an int (required — three f-strings downstream use the
+        # ':+d' format spec on `weighted`, which strictly rejects a float; the earlier
+        # version of this fix produced a float here, which broke get_daily_bias() with
+        # "Unknown format code 'd' for object of type 'float'" on every real call since
+        # deploy — confirmed live, this was the actual cause of the "No bias data
+        # available" symptom being investigated, not a separate fetch-path issue).
+        _today_weight = round(5 * min(today_ratio / 0.6, 1.0)) if today_ratio else 0
 
         # Weighted score: today (scaled, max 5), d1×4, d2×3, d3×2, d4×1 — max ±15
         weighted = (
