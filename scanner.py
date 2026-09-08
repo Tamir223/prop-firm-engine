@@ -1588,6 +1588,17 @@ async def check_tjr_gates(symbol: str, candles: list, ob: dict, fvg: dict,
     gates['htf_bias'] = _htf_ok and _bias_aligned
     _d1 = htf_bias.get("d1_trend", "unclear")
     _h4 = htf_bias.get("h4_trend", "unclear")
+    # DIAGNOSTIC — gate_details['htf_bias'] (built below) only ever reaches journalctl
+    # if the signal fully dispatches; for a BLOCKED signal it's silently discarded,
+    # so there was no way to see WHY this gate failed for any signal that never made
+    # it through. Logging the raw sub-check values directly here instead, every time,
+    # regardless of pass/fail, so the actual blocking condition is always visible.
+    logger.info(
+        f"[htf_bias_diag] {symbol} need={_htf_dir} h4_trend={_h4} h1_trend={htf_bias.get('h1_trend','unclear')} "
+        f"d1_trend={_d1} overall_bias={htf_bias.get('bias','unclear')} htf_ok={_htf_ok} "
+        f"h4_cur_conflict={_h4_cur_conflict} daily_bias_aligned={_bias_aligned} daily_bias_msg={_bias_msg!r} "
+        f"gate_result={_htf_ok and _bias_aligned}"
+    )
     if _h4_cur_conflict:
         gate_details['htf_bias'] = f"current H4 candle strongly {_h4_cur_dir} vs needed {_htf_dir} — blocked"
     elif _htf_ok and _bias_aligned:
