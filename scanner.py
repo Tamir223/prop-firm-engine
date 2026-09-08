@@ -2428,8 +2428,23 @@ async def scan_symbol(symbol: str, active_signals: list = None) -> dict | None:
                 pass  # unparseable datetime string — proceed normally
 
         # ── MARKET STRUCTURE + DIRECTION — PRIMARY GATE ─────────────────────
+        # Bias computed BEFORE get_trade_direction so its properly-aligned Daily/4H/1H
+        # read (not just a Daily-only score) can inform the conflict check. Moved up
+        # from its old position after this block — uses the SAME pre-fetched
+        # candles_1h/candles_4h/candles_daily already sitting in _data, so this costs
+        # zero extra API calls, just earlier use of data already being fetched anyway.
+        from scanner_improvements import get_daily_bias as _get_daily_bias
+        daily_bias = _get_daily_bias(symbol, candles=_data.get("candles_daily"))
+
+        htf_bias = get_htf_bias(
+            symbol,
+            candles_1h=_data.get("candles_1h"),
+            candles_4h=_data.get("candles_4h"),
+            candles_daily=_data.get("candles_daily"),
+        )
+
         ms = analyze_market_structure(candles)
-        _gt_direction, _gt_strength = get_trade_direction(symbol, candles)
+        _gt_direction, _gt_strength = get_trade_direction(symbol, candles, htf_bias_override=htf_bias)
         if _gt_direction is None:
             logger.info(f"[scanner] {symbol} {_gt_strength} — no trade")
             return None
@@ -2507,15 +2522,6 @@ async def scan_symbol(symbol: str, active_signals: list = None) -> dict | None:
                 )
                 fvg = None
 
-        from scanner_improvements import get_daily_bias as _get_daily_bias
-        daily_bias = _get_daily_bias(symbol, candles=_data.get("candles_daily"))
-
-        htf_bias = get_htf_bias(
-            symbol,
-            candles_1h=_data.get("candles_1h"),
-            candles_4h=_data.get("candles_4h"),
-            candles_daily=_data.get("candles_daily"),
-        )
         direction = _gt_direction
 
         # ── DRAW ON LIQUIDITY ─────────────────────────────────────────────────

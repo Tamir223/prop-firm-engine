@@ -1988,10 +1988,28 @@ def analyze_market_structure(candles: list) -> dict:
 
 # ─── 22. UNIFIED TRADE DIRECTION ─────────────────────────────────────────────
 
-def get_trade_direction(symbol: str, candles_15m: list) -> tuple:
+def get_trade_direction(symbol: str, candles_15m: list, htf_bias_override: dict = None) -> tuple:
     """
     Single source of truth for trade direction — used by scanner and /bias.
     Combines daily bias with 15M market structure (swing high/low analysis).
+
+    htf_bias_override: optional pre-computed result from get_htf_bias() (Daily/4H/1H
+    aligned). When provided, its properly-timeframe-checked 'bias' field is used
+    instead of the simpler Daily-only get_daily_bias() score. This matters because
+    ICT/SMC top-down methodology (confirmed across multiple current sources) treats
+    a 15M structure read that disagrees with Daily as ambiguous UNLESS the
+    intermediate 4H/1H timeframes have ALSO turned — otherwise it's very likely
+    just a normal retracement within an intact higher-timeframe trend, not a real
+    reversal ("a move that looks like a reversal on the 15M is often just a
+    retracement on the 4H... check two timeframes above your entry timeframe").
+    Confirmed live: this exact gap left USDJPY blocked on 'htf_bias' for ~16 hours
+    overnight and ~28 minutes on a separate signal, in both cases while Daily bias
+    was genuinely correct — the old check only ever compared Daily directly
+    against 15M, with no way to tell a real reversal from a normal pullback.
+    get_htf_bias()'s own 'bias' field already implements the right hierarchy:
+    fully aligned -> that direction; 1H/4H agree but Daily doesn't -> trust 1H/4H;
+    1H/4H disagree with each other -> 'mixed' (mapped to neutral here, same
+    treatment as an unclear daily bias).
 
     Returns (direction, strength):
       ('BUY',  'strong')  — bias bullish  + market structure uptrend
@@ -2001,10 +2019,17 @@ def get_trade_direction(symbol: str, candles_15m: list) -> tuple:
       (None,   'ranging') — market structure ranging → skip
       (None,   'conflict')— bias conflicts with market structure → skip
     """
-    daily_bias = get_daily_bias(symbol)
+    if htf_bias_override and htf_bias_override.get('bias') not in (None, 'unclear'):
+        _htf_b = htf_bias_override['bias']
+        bias = 'neutral' if _htf_b == 'mixed' else _htf_b
+        _bias_detail = htf_bias_override
+    else:
+        _daily_bias_fallback = get_daily_bias(symbol)
+        bias = _daily_bias_fallback.get('bias', 'neutral')
+        _bias_detail = _daily_bias_fallback
+        htf_bias_override = None  # no h4/h1 detail available for the retracement check below
     ms = analyze_market_structure(candles_15m)
     structure = ms["structure"]
-    bias = daily_bias.get('bias', 'neutral')
 
     if structure == 'ranging':
         return None, 'ranging'
@@ -2017,10 +2042,29 @@ def get_trade_direction(symbol: str, candles_15m: list) -> tuple:
     elif bias == 'neutral' and structure == 'downtrend':
         return 'SELL', 'weak'
     elif bias == 'bullish' and structure == 'downtrend':
-        logger.info(f"[scanner] {symbol} Gate 2 fail — HTF bias conflicts with 15M structure — no trade (bias={bias}, structure={structure}, daily_bias_detail={daily_bias})")
+        # RETRACEMENT CHECK — before blocking, check whether 4H AND 1H (not just the
+        # collapsed bias field) still BOTH confirm the original bullish direction.
+        # If so, this 15M downtrend is very likely a normal retracement inside an
+        # intact higher-timeframe uptrend, not a genuine reversal — exactly the
+        # principle multiple current ICT/SMC sources describe: "a move that looks
+        # like a reversal on the 15M is often just a retracement on the 4H... check
+        # two timeframes above your entry timeframe; if structure on both remains
+        # intact and pointing in the original direction, treat the move as a
+        # retracement." Confirmed live: without this, USDJPY sat blocked on
+        # 'htf_bias' for ~16 hours overnight and ~28 minutes on a separate signal,
+        # in both cases very plausibly because 4H/1H never actually turned — only
+        # the noisy 15M read kept flipping.
+        if htf_bias_override and htf_bias_override.get('h4_trend') == 'bullish' and htf_bias_override.get('h1_trend') == 'bullish':
+            logger.info(f"[scanner] {symbol} 15M downtrend vs bullish bias, but 4H+1H both still bullish — retracement, not conflict")
+            return 'BUY', 'strong'
+        logger.info(f"[scanner] {symbol} Gate 2 fail — HTF bias conflicts with 15M structure — no trade (bias={bias}, structure={structure}, daily_bias_detail={_bias_detail})")
         return None, 'conflict'
     elif bias == 'bearish' and structure == 'uptrend':
-        logger.info(f"[scanner] {symbol} Gate 2 fail — HTF bias conflicts with 15M structure — no trade (bias={bias}, structure={structure}, daily_bias_detail={daily_bias})")
+        # RETRACEMENT CHECK — same logic mirrored for SELL — see the BUY branch above.
+        if htf_bias_override and htf_bias_override.get('h4_trend') == 'bearish' and htf_bias_override.get('h1_trend') == 'bearish':
+            logger.info(f"[scanner] {symbol} 15M uptrend vs bearish bias, but 4H+1H both still bearish — retracement, not conflict")
+            return 'SELL', 'strong'
+        logger.info(f"[scanner] {symbol} Gate 2 fail — HTF bias conflicts with 15M structure — no trade (bias={bias}, structure={structure}, daily_bias_detail={_bias_detail})")
         return None, 'conflict'
     else:
         return None, 'ranging'
