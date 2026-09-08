@@ -1385,6 +1385,17 @@ def get_daily_bias(symbol: str, candles: list = None) -> dict:
             _daily_candles = list(reversed(candles))
         else:
             _daily_candles = None
+            # DIAGNOSTIC — this fast path silently falls through to a fresh TD/yfinance
+            # fetch whenever pre-fetched candles are missing OR too few (< 3), even if
+            # get_htf_bias() already succeeded with the SAME candles for its own,
+            # looser 5-candle-window need. Confirmed live: USDJPY was showing
+            # "No bias data available" in htf_bias_diag while d1_trend (from the same
+            # candles_daily bundle, via get_htf_bias) was populated fine — logging
+            # exactly what was actually passed in, to see if this is the cause.
+            logger.info(
+                f"[daily_bias_diag] {symbol} fast path NOT used — "
+                f"candles={'None' if candles is None else f'{len(candles)} items'} (need >= 3)"
+            )
 
         # Build raw_candles (oldest→newest) either from pre-fetched data or API
         raw_candles = []
@@ -1428,25 +1439,30 @@ def get_daily_bias(symbol: str, candles: list = None) -> dict:
                         _msg = data.get("message", "")
                         if "credits" in _msg.lower():
                             _mark_td_exhausted()
-            except Exception:
-                pass
+                        logger.info(f"[daily_bias_diag] {symbol} TD returned non-success: {_msg!r}")
+            except Exception as _td_exc:
+                logger.info(f"[daily_bias_diag] {symbol} TD fetch raised: {_td_exc!r}")
             if not td_success:
                 if not yf_ticker:
+                    logger.info(f"[daily_bias_diag] {symbol} no yFinance ticker mapping — giving up")
                     return _default
                 try:
                     import yfinance as yf
                     hist = yf.Ticker(yf_ticker).history(period="30d", interval="1d")
                     if hist.empty or len(hist) < 3:
+                        logger.info(f"[daily_bias_diag] {symbol} yFinance {yf_ticker} returned {len(hist)} rows (need >= 3)")
                         return _default
                     for _, row in hist.iloc[-20:].iterrows():
                         raw_candles.append({
                             "open": float(row["Open"]), "high": float(row["High"]),
                             "low":  float(row["Low"]),  "close": float(row["Close"]),
                         })
-                except Exception:
+                except Exception as _yf_exc:
+                    logger.info(f"[daily_bias_diag] {symbol} yFinance {yf_ticker} raised: {_yf_exc!r}")
                     return _default
 
         if len(raw_candles) < 5:
+            logger.info(f"[daily_bias_diag] {symbol} raw_candles={len(raw_candles)} after all fetch attempts (need >= 5)")
             return _default
 
         def _candle_dir(c):
