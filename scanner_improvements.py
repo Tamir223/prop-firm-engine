@@ -1506,7 +1506,23 @@ def get_daily_bias(symbol: str, candles: list = None) -> dict:
         # "Unknown format code 'd' for object of type 'float'" on every real call since
         # deploy — confirmed live, this was the actual cause of the "No bias data
         # available" symptom being investigated, not a separate fetch-path issue).
-        _today_weight = round(5 * min(today_ratio / 0.6, 1.0)) if today_ratio else 0
+        # Today's weight is BINARY (full weight or zero), not scaled — reusing the
+        # existing 0.6 intraday_override threshold below. Verified against current
+        # research on using an incomplete/still-forming period in a trend score
+        # (the same category of concern as "repainting" indicators): established
+        # best practice is not to partially credit an incomplete candle at all —
+        # "wait for the candle to close before taking any consideration of the
+        # indicator's value." An earlier version of this fix used a continuous
+        # scale (5 * ratio/0.6), which still let a moderately-ambiguous candle
+        # (e.g. ratio 0.35) partially sway the score — a smaller version of the
+        # same repainting risk, just less severe than the original flat +-5.
+        # This system's own documented intent (see the threshold-lowered comment
+        # below) is to catch day-1 of a new trend WITHOUT waiting for the candle
+        # to close — the existing intraday_override (ratio > 0.6) is already the
+        # mechanism for that: trust today FULLY once it's genuinely decisive,
+        # otherwise defer entirely to the reliable, already-closed d1-d4 data
+        # rather than partially trusting an still-ambiguous move.
+        _today_weight = 5 if today_ratio > 0.6 else 0
 
         # Weighted score: today (scaled, max 5), d1×4, d2×3, d3×2, d4×1 — max ±15
         weighted = (
